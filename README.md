@@ -5,11 +5,11 @@ a single, dependency-free Go binary.
 
 A *tessera* is a single tile in a mosaic — this app routes every input "tile" into place. It
 talks the matrix's raw-TCP control protocol directly, shows a live routing grid, and puts
-switching, presets, and the buzzer one keystroke away. Because it's a TUI it works locally or
+switching, named scenes, and the buzzer one keystroke away. Because it's a TUI it works locally or
 over SSH.
 
 ```
-● 10.10.0.1:5000  connected    buzzer off   tessera 0.1.0
+● 10.10.0.1:5000  connected    buzzer off   [GRID]   tessera 0.1.0
 
            Input 1  Input 2  Input 3  Input 4
 Output 1      ●        ·        ·        ·
@@ -17,7 +17,7 @@ Output 2      ·        ●        ·        ·
 Output 3      ·        ·        ●        ·
 Output 4      ·        ·        ·        ●
 
-↑↓←→ move  enter route  1-4 all→input  m mirror  s+1-8 save  r+1-8 recall  b buzzer  e labels  q quit
+↑↓←→ move  enter route  1-4 all→input  m mirror  tab scenes  b buzzer  e labels  R refresh  q quit
 ```
 
 ## Install & run
@@ -95,7 +95,8 @@ recallable from the physical remote / front panel too.
 
 ## Configuration
 
-On first run tessera writes `~/.config/tessera/config.toml`:
+tessera stores its settings in `~/.config/tessera/config.toml` (created with defaults on first run,
+without any scenes). A populated file looks like:
 
 ```toml
 host = "10.10.0.1"
@@ -144,8 +145,8 @@ until `END` (or a timeout) rather than doing a single read.
 main.go                       CLI entry: flags, config, runs the Bubble Tea program
 internal/matrix/protocol.go   command formatters + status parser (pure)
 internal/matrix/client.go     persistent TCP client (read-until-END, mutex-serialized)
-internal/config/config.go     TOML config + labels at ~/.config/tessera/
-tui/                          Bubble Tea model, update/keys, and view
+internal/config/config.go     TOML config: labels + scenes at ~/.config/tessera/
+tui/                          Bubble Tea model, grid + scene views, keys
 ```
 
 ## Development
