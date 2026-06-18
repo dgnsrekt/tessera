@@ -1,13 +1,11 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.eggs/
-build/
-dist/
+# Build output
+/tessera
+*.exe
 
-# uv / venv
-.venv/
+# Go
+*.test
+*.out
+/dist/
 
 # OS / editor
 .DS_Store
