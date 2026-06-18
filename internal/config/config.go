@@ -12,6 +12,30 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// Scene is a named, described routing snapshot. Routes is indexed by output-1
+// and holds the input feeding that output (0 = unset). Slot, when 1-8, mirrors
+// the scene into one of the unit's hardware presets at capture time so the
+// physical remote can recall it too.
+type Scene struct {
+	Name        string `toml:"name"`
+	Description string `toml:"description"`
+	Routes      []int  `toml:"routes"`
+	Slot        int    `toml:"slot"`
+}
+
+// RoutesMap returns the snapshot as {output: input}, covering numOutputs.
+func (s Scene) RoutesMap(numOutputs int) map[int]int {
+	m := make(map[int]int, numOutputs)
+	for out := 1; out <= numOutputs; out++ {
+		if out-1 < len(s.Routes) {
+			if in := s.Routes[out-1]; in > 0 {
+				m[out] = in
+			}
+		}
+	}
+	return m
+}
+
 // Config is the on-disk settings document.
 type Config struct {
 	Host         string   `toml:"host"`
@@ -19,6 +43,7 @@ type Config struct {
 	PollInterval float64  `toml:"poll_interval"`
 	Inputs       []string `toml:"inputs"`
 	Outputs      []string `toml:"outputs"`
+	Scenes       []Scene  `toml:"scenes"`
 }
 
 // Default returns the settings written on first run.

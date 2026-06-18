@@ -22,8 +22,13 @@ var (
 
 // View renders the whole screen.
 func (m Model) View() string {
-	if m.mode == modeLabelEdit {
+	switch m.mode {
+	case modeLabelEdit:
 		return m.labelEditView()
+	case modeSceneEdit:
+		return m.sceneEditView()
+	case modeScene:
+		return m.sceneScreen()
 	}
 	var b strings.Builder
 	b.WriteString(m.statusBar())
@@ -43,12 +48,16 @@ func (m Model) statusBar() string {
 		dot = dotRed.Render("●")
 		state = "disconnected"
 	}
+	tag := "[GRID]"
+	if m.mode == modeScene || m.mode == modeSceneEdit {
+		tag = "[SCENES]"
+	}
 	left := fmt.Sprintf("%s %s  %s",
 		dot,
 		boldStyle.Render(fmt.Sprintf("%s:%d", m.cfg.Host, m.cfg.Port)),
 		state,
 	)
-	right := dimStyle.Render(fmt.Sprintf("buzzer %s   tessera %s", onOff(m.buzzerOn), m.version))
+	right := dimStyle.Render(fmt.Sprintf("buzzer %s   %s   tessera %s", onOff(m.buzzerOn), tag, m.version))
 	return left + "    " + right
 }
 
@@ -106,8 +115,129 @@ func (m Model) gridView() string {
 func (m Model) legend() string {
 	return legendStyle.Render(
 		"↑↓←→ move   enter route   1-4 all→input   m mirror   " +
-			"s+1-8 save   r+1-8 recall   b buzzer   e labels   R refresh   q quit",
+			"tab scenes   b buzzer   e labels   R refresh   q quit",
 	)
+}
+
+func (m Model) sceneLegend() string {
+	return legendStyle.Render(
+		"↑↓ select   enter apply   n new   s update   e edit   d delete   tab/esc back   q quit",
+	)
+}
+
+func (m Model) sceneScreen() string {
+	var b strings.Builder
+	b.WriteString(m.statusBar())
+	b.WriteString("\n\n")
+	b.WriteString(boldStyle.Render("Scenes"))
+	b.WriteString("\n\n")
+
+	if len(m.cfg.Scenes) == 0 {
+		b.WriteString(dimStyle.Render("No scenes yet — press "))
+		b.WriteString(boldStyle.Render("n"))
+		b.WriteString(dimStyle.Render(" to capture the current routing as a scene."))
+		b.WriteString("\n\n")
+		b.WriteString(toastStyle.Render(m.toast))
+		b.WriteString("\n\n")
+		b.WriteString(m.sceneLegend())
+		return b.String()
+	}
+
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, m.sceneList(), "   ", m.sceneDetail()))
+	b.WriteString("\n\n")
+	b.WriteString(toastStyle.Render(m.toast))
+	b.WriteString("\n\n")
+	b.WriteString(m.sceneLegend())
+	return b.String()
+}
+
+func (m Model) sceneList() string {
+	var b strings.Builder
+	curr := m.routes
+	for i, sc := range m.cfg.Scenes {
+		marker := " "
+		if routesEqual(sc.RoutesMap(m.cfg.NumOutputs()), curr) {
+			marker = greenStyle.Render("●")
+		}
+		badge := ""
+		if sc.Slot > 0 {
+			badge = dimStyle.Render(fmt.Sprintf(" [%d]", sc.Slot))
+		}
+		name := sc.Name
+		if name == "" {
+			name = fmt.Sprintf("Scene %d", i+1)
+		}
+		row := fmt.Sprintf("%s %s%s", marker, name, badge)
+		if i == m.sceneSel {
+			row = lipgloss.NewStyle().Reverse(true).Render(fmt.Sprintf("%s %s%s", marker, name, badge))
+		}
+		b.WriteString(row)
+		b.WriteString("\n")
+	}
+	return lipgloss.NewStyle().Width(28).Render(b.String())
+}
+
+func (m Model) sceneDetail() string {
+	if m.sceneSel < 0 || m.sceneSel >= len(m.cfg.Scenes) {
+		return ""
+	}
+	sc := m.cfg.Scenes[m.sceneSel]
+	var b strings.Builder
+	name := sc.Name
+	if name == "" {
+		name = fmt.Sprintf("Scene %d", m.sceneSel+1)
+	}
+	b.WriteString(boldStyle.Render(name))
+	if sc.Slot > 0 {
+		b.WriteString(dimStyle.Render(fmt.Sprintf("   hardware preset %d", sc.Slot)))
+	}
+	b.WriteString("\n")
+	if sc.Description != "" {
+		b.WriteString(dimStyle.Render(sc.Description))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+	rm := sc.RoutesMap(m.cfg.NumOutputs())
+	for out := 1; out <= m.cfg.NumOutputs(); out++ {
+		in, ok := rm[out]
+		line := fmt.Sprintf("%s → ", m.cfg.OutputLabel(out))
+		if ok {
+			line += m.cfg.InputLabel(in)
+		} else {
+			line += dimStyle.Render("(unset)")
+		}
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return boxStyle.Render(b.String())
+}
+
+func (m Model) sceneEditView() string {
+	verb := "New scene"
+	if m.editingScene >= 0 {
+		verb = "Edit scene"
+	}
+	slotStr := "none"
+	if m.sceneSlot > 0 {
+		slotStr = fmt.Sprintf("%d", m.sceneSlot)
+	}
+	slotLine := fmt.Sprintf("Hardware slot: ◄ %s ►", slotStr)
+	if m.sceneEditFocus == 2 {
+		slotLine = lipgloss.NewStyle().Reverse(true).Render(slotLine)
+	}
+	body := fmt.Sprintf(
+		"%s\n\nName:\n%s\n\nDescription:\n%s\n\n%s\n\n%s",
+		boldStyle.Render(verb),
+		m.sceneName.View(),
+		m.sceneDesc.View(),
+		slotLine,
+		dimStyle.Render("tab/↑↓ move · ←→ change slot · enter save · esc cancel"),
+	)
+	box := boxStyle.Render(body)
+	if m.width > 0 && m.height > 0 {
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	}
+	return box
 }
 
 func (m Model) labelEditView() string {

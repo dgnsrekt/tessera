@@ -52,14 +52,15 @@ GOOS=windows GOARCH=amd64 go build -o tessera.exe .
 
 ## Keys
 
+### Grid view
+
 | Key | Action |
 |---|---|
 | `↑ ↓ ← →` / `h j k l` | move the grid cursor |
 | `enter` / `space` | route the cursor's input → output |
 | `1`–`4` | send that input to **all** outputs |
 | `m` | mirror (out1←in1 … out4←in4) |
-| `s` then `1`–`8` | **save** current routing to a preset slot |
-| `r` then `1`–`8` | **recall** a preset slot |
+| `tab` | switch to **Scene Mode** |
 | `b` | toggle the unit's buzzer |
 | `e` | rename the cursor's input/output |
 | `R` | force a status refresh |
@@ -67,6 +68,30 @@ GOOS=windows GOARCH=amd64 go build -o tessera.exe .
 
 The grid auto-refreshes ~once per second, so changes made from the front panel or IR remote show
 up on their own.
+
+### Scene Mode (`tab`)
+
+Scenes are named, described routing snapshots — a friendlier replacement for raw preset slots.
+The menu lists your scenes with a live `●` marker on whichever one matches the current routing,
+and a detail pane previews the selected scene's routing using your labels.
+
+| Key | Action |
+|---|---|
+| `↑ ↓` / `j k` | move the selection |
+| `enter` / `space` | **apply** the selected scene (replays its routing) |
+| `n` | **new** scene — capture the current routing, then name it |
+| `s` | **update** the selected scene's routing from the current state |
+| `e` | **edit** the selected scene's name / description / hardware slot |
+| `d` | **delete** the selected scene (confirm with `y`) |
+| `tab` / `esc` | back to Grid view |
+
+In the scene editor, `tab`/`↑↓` move between fields, `←→` change the hardware slot, `enter` saves,
+`esc` cancels.
+
+**Hybrid storage.** Scenes live in `config.toml`, so they're unlimited, previewable, and portable;
+applying one replays its routing over TCP. If you assign a scene a **hardware slot (1-8)**, tessera
+also writes that preset into the unit's memory when the scene is captured — so those scenes are
+recallable from the physical remote / front panel too.
 
 ## Configuration
 
@@ -78,10 +103,23 @@ port = 5000
 poll_interval = 1.0
 inputs = ["Input 1", "Input 2", "Input 3", "Input 4"]
 outputs = ["Output 1", "Output 2", "Output 3", "Output 4"]
+
+[[scenes]]
+  name = "Movie Night"
+  description = "Apple TV everywhere"
+  routes = [2, 2, 2, 2]   # index = output-1, value = input (0 = unset)
+  slot = 1                # 0 = none; 1-8 = also mirror to a hardware preset
+
+[[scenes]]
+  name = "Work"
+  description = ""
+  routes = [1, 2, 3, 4]
+  slot = 0
 ```
 
-Custom labels (set with `e`, or edited here) are stored locally because the device protocol has
-no naming of its own.
+Custom labels (set with `e`, or edited here) and scenes are stored locally because the device
+protocol has no naming or rich-preset support of its own. You can hand-edit scenes here or manage
+them entirely from Scene Mode.
 
 ## Protocol
 

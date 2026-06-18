@@ -39,3 +39,55 @@ func (m Model) actionCmd(do func() error) tea.Cmd {
 		return statusMsg{routes: routes, err: err}
 	}
 }
+
+// applyRoutesCmd drives the matrix to the given {output: input} snapshot using
+// the minimal command set, then re-polls.
+func (m Model) applyRoutesCmd(routes map[int]int) tea.Cmd {
+	client := m.client
+	nout := m.cfg.NumOutputs()
+
+	// Stable (output, input) pairs for outputs that are set.
+	pairs := make([][2]int, 0, len(routes))
+	for out := 1; out <= nout; out++ {
+		if in, ok := routes[out]; ok && in > 0 {
+			pairs = append(pairs, [2]int{out, in})
+		}
+	}
+
+	return func() tea.Msg {
+		switch {
+		case len(pairs) == nout && allSameInput(pairs):
+			_ = client.AllTo(pairs[0][1])
+		case len(pairs) == nout && isMirror(pairs):
+			_ = client.Mirror()
+		default:
+			for _, p := range pairs {
+				_ = client.Route(p[1], p[0]) // Route(in, out)
+			}
+		}
+		routes, err := client.Status()
+		return statusMsg{routes: routes, err: err}
+	}
+}
+
+func allSameInput(pairs [][2]int) bool {
+	if len(pairs) == 0 {
+		return false
+	}
+	in := pairs[0][1]
+	for _, p := range pairs {
+		if p[1] != in {
+			return false
+		}
+	}
+	return true
+}
+
+func isMirror(pairs [][2]int) bool {
+	for _, p := range pairs {
+		if p[0] != p[1] { // output != input
+			return false
+		}
+	}
+	return true
+}

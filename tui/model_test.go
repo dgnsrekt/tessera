@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -35,6 +36,22 @@ func update(m Model, msg tea.Msg) Model {
 	return nm.(Model)
 }
 
+func step(m Model, msg tea.Msg) (Model, tea.Cmd) {
+	nm, cmd := m.Update(msg)
+	return nm.(Model), cmd
+}
+
+func typeText(m Model, s string) Model {
+	for _, r := range s {
+		m = update(m, runeKey(r))
+	}
+	return m
+}
+
+func (f *fakeMatrix) called(name string) bool {
+	return slices.Contains(f.calls, name)
+}
+
 func newModel(fake *fakeMatrix) Model {
 	m := New(config.Default(), fake, "test")
 	m = update(m, tea.WindowSizeMsg{Width: 120, Height: 40})
@@ -53,41 +70,123 @@ func TestGridRendersDiagonal(t *testing.T) {
 	}
 }
 
-func TestPresetPrefixCancelDoesNotFire(t *testing.T) {
+func TestTabTogglesSceneMode(t *testing.T) {
 	fake := &fakeMatrix{routes: map[int]int{1: 1, 2: 2, 3: 3, 4: 4}}
 	m := newModel(fake)
 
-	m = update(m, runeKey('s'))
-	if m.pending != "save" {
-		t.Fatalf("after 's', pending=%q want save", m.pending)
+	m = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.mode != modeScene {
+		t.Fatalf("after tab, mode=%v want scene", m.mode)
 	}
-	m = update(m, tea.KeyMsg{Type: tea.KeyEsc})
-	if m.pending != "" {
-		t.Fatalf("after esc, pending=%q want empty", m.pending)
-	}
-	if len(fake.calls) != 0 {
-		t.Fatalf("no device calls expected, got %v", fake.calls)
+	m = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.mode != modeGrid {
+		t.Fatalf("after second tab, mode=%v want grid", m.mode)
 	}
 }
 
-func TestPresetSaveFires(t *testing.T) {
+func TestNewSceneCapturesAndPersists(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	fake := &fakeMatrix{routes: map[int]int{1: 2, 2: 2, 3: 1, 4: 1}}
+	m := newModel(fake)
+
+	m = update(m, tea.KeyMsg{Type: tea.KeyTab}) // -> scene view
+	m = update(m, runeKey('n'))                 // -> editor (capture current)
+	if m.mode != modeSceneEdit {
+		t.Fatalf("after 'n', mode=%v want sceneEdit", m.mode)
+	}
+	m = typeText(m, "Movie Night")
+	m = update(m, tea.KeyMsg{Type: tea.KeyEnter}) // save
+
+	if len(m.cfg.Scenes) != 1 {
+		t.Fatalf("expected 1 scene, got %d", len(m.cfg.Scenes))
+	}
+	sc := m.cfg.Scenes[0]
+	if sc.Name != "Movie Night" {
+		t.Fatalf("name=%q want Movie Night", sc.Name)
+	}
+	want := []int{2, 2, 1, 1}
+	if len(sc.Routes) != 4 || sc.Routes[0] != want[0] || sc.Routes[3] != want[3] {
+		t.Fatalf("routes=%v want %v", sc.Routes, want)
+	}
+	// persisted to temp config
+	saved, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Scenes) != 1 || saved.Scenes[0].Name != "Movie Night" {
+		t.Fatalf("persisted scenes=%v", saved.Scenes)
+	}
+}
+
+func TestApplySceneReplaysRouting(t *testing.T) {
+	fake := &fakeMatrix{routes: map[int]int{1: 1, 2: 2, 3: 3, 4: 4}}
+	m := newModel(fake)
+	m.cfg.Scenes = []config.Scene{{Name: "All2", Routes: []int{2, 2, 2, 2}}}
+
+	m = update(m, tea.KeyMsg{Type: tea.KeyTab}) // scene view
+	_, cmd := step(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected an apply command")
+	}
+	cmd() // run the replay closure
+	if !fake.called("allto") {
+		t.Fatalf("expected an AllTo replay (all outputs same input), calls=%v", fake.calls)
+	}
+}
+
+func TestSceneSlotWritesHardwarePreset(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	fake := &fakeMatrix{routes: map[int]int{1: 1, 2: 2, 3: 3, 4: 4}}
 	m := newModel(fake)
 
-	m = update(m, runeKey('s'))
-	_, cmd := m.Update(runeKey('3')) // save to slot 3
+	m = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m = update(m, runeKey('n'))
+	m = typeText(m, "Mirror")
+	m.sceneSlot = 1 // assign hardware slot
+	_, cmd := step(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
-		t.Fatal("expected a command from save")
+		t.Fatal("expected a command (hardware preset write)")
 	}
-	cmd() // execute the action closure -> records "save" on the fake
-	found := false
-	for _, c := range fake.calls {
-		if c == "save" {
-			found = true
+	cmd()
+	if !fake.called("save") {
+		t.Fatalf("expected a SavePreset call for slot 1, calls=%v", fake.calls)
+	}
+}
+
+func TestDeleteSceneWithConfirm(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	fake := &fakeMatrix{routes: map[int]int{1: 1, 2: 2, 3: 3, 4: 4}}
+	m := newModel(fake)
+	m.cfg.Scenes = []config.Scene{{Name: "Gone", Routes: []int{1, 2, 3, 4}}}
+
+	m = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m = update(m, runeKey('d'))
+	if !m.confirmDelete {
+		t.Fatal("expected confirmDelete armed")
+	}
+	m = update(m, runeKey('n')) // cancel
+	if len(m.cfg.Scenes) != 1 {
+		t.Fatalf("cancel should keep scene, got %d", len(m.cfg.Scenes))
+	}
+	m = update(m, runeKey('d'))
+	m = update(m, runeKey('y')) // confirm
+	if len(m.cfg.Scenes) != 0 {
+		t.Fatalf("confirm should delete, got %d", len(m.cfg.Scenes))
+	}
+}
+
+func TestSceneViewShowsNameAndPreview(t *testing.T) {
+	fake := &fakeMatrix{routes: map[int]int{1: 1, 2: 2, 3: 3, 4: 4}}
+	m := newModel(fake)
+	m.cfg.Inputs[1] = "Apple TV"
+	m.cfg.Scenes = []config.Scene{{Name: "Living", Description: "den setup", Routes: []int{2, 2, 2, 2}}}
+	m = update(m, tea.KeyMsg{Type: tea.KeyTab})
+
+	view := m.View()
+	for _, want := range []string{"Living", "den setup", "Apple TV", "[SCENES]"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("scene view missing %q\n---\n%s", want, view)
 		}
-	}
-	if !found {
-		t.Fatalf("expected a save call, got %v", fake.calls)
 	}
 }
 
